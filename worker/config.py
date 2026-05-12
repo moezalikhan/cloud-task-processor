@@ -1,8 +1,7 @@
 from pydantic_settings import BaseSettings
 
 
-class Settings(BaseSettings):
-    app_name: str = "cloud-task-processor"
+class WorkerSettings(BaseSettings):
     log_level: str = "INFO"
     aws_region: str = "eu-north-1"
     sqs_queue_url: str = ""
@@ -17,4 +16,4 @@ class Settings(BaseSettings):
         env_file_encoding = "utf-8"
 
 
-settings = Settings()
+settings = WorkerSettings()

@@ -1,52 +1,31 @@
 import logging
-import threading
 from datetime import datetime, UTC
 from fastapi import FastAPI
 from fastapi import HTTPException
 from uuid import UUID, uuid4
 from producer.models import JobCreateRequest, JobCreateResponse, JobStatusResponse
-from producer.queue import LocalQueue
-from worker.worker import run_worker
+from producer.queue import get_queue_client
 from producer.config import settings
 
 logging.basicConfig(level=settings.log_level)
-logger = logging.getLogger(__name__ )
+logger = logging.getLogger(__name__)
 
-queue = LocalQueue()
-
+queue = get_queue_client()
 app = FastAPI(title=settings.app_name, version="0.1.0")
 
-#  Shared Dictionary For Data
-jobs :  dict[UUID , dict] = {}
-queue : LocalQueue()
-stop_event = threading.Event()
+# Shared dict for job status
+jobs: dict[UUID, dict] = {}
 
-
-# Endpoints for the different operations
-@app.on_event("startup")
-def startup_event():
-    logger.info("Starting worker Thread.")
-    worker_thread = threading.Thread(
-        target= run_worker,
-        args= (queue,jobs,stop_event),
-        daemon= True
-    )
-    worker_thread.start()
-    logger.info("Thread Started")
-
-@app.on_event("shutdown")
-def shutdown_event():
-    logger.info("Shutting Down Thread")
-    stop_event.set()
-    logger.info("Shutdown")
 
 @app.get("/")
 def root():
-    return{"status": "ok", "service": settings.app_name}
+    return {"status": "ok", "service": settings.app_name}
+
+
 @app.get("/health")
 def health():
-    """Health check endpoint."""
-    return {"status": "healthy", "queue": "local"}
+    queue_type = "local" if settings.use_local_queue else "sqs"
+    return {"status": "healthy", "queue": queue_type}
 
 
 @app.post("/jobs", response_model=JobCreateResponse, status_code=201)
@@ -55,23 +34,22 @@ def create_job(request: JobCreateRequest):
     job_id = uuid4()
     submitted_at = datetime.now(UTC)
 
-    # Build job record
     job_record = {
         "job_id": str(job_id),
         "url": str(request.url),
         "notify_email": request.notify_email,
         "status": "queued",
         "submitted_at": submitted_at.isoformat(),
+    }
+
+    jobs[job_id] = {
+        **job_record,
         "completed_at": None,
         "result": None,
         "error": None,
     }
 
-    # Store in shared dict
-    jobs[job_id] = job_record.copy()
-
-    # Push to queue
-    queue.send(job_record)
+    queue.send_message(job_record)
     logger.info("Job %s queued for URL %s", job_id, request.url)
 
     return JobCreateResponse(
@@ -79,6 +57,7 @@ def create_job(request: JobCreateRequest):
         status="queued",
         submitted_at=submitted_at,
     )
+
 
 @app.get("/jobs/{job_id}", response_model=JobStatusResponse)
 def get_job(job_id: UUID):

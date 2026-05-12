@@ -1,47 +1,64 @@
 import time
 import logging
 from datetime import datetime, UTC
-from uuid import UUID
 
-from producer.queue import LocalQueue
+from producer.queue import get_queue_client
+from worker.notifier import get_notifier
 from worker.extractor import extract_metadata, ExtractionError
+from worker.config import settings
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def run_worker(queue : LocalQueue, jobs : dict, stop_event)-> None:
-    logger.info("Worker Started Polling every 5 Seconds")
-    while not stop_event.is_set():
-        # poll queue
-        message = queue.recieve()
+
+def main():
+    queue = get_queue_client()
+    notifier = get_notifier()
+    
+    logger.info(f"Worker started. Polling every {settings.poll_interval_seconds} seconds.")
+    
+    while True:
+        message = queue.receive_message()
         if message is None:
-            time.sleep(5)
+            time.sleep(settings.poll_interval_seconds)
             continue
-        message_id, payload = message
-        job_id = UUID(payload["job_id"])
+        
+        receipt_handle, payload = message
+        logger.info(f"Received payload: {payload}")  # ADD THIS
+        # Skip messages without job_id
+        if "job_id" not in payload:
+            logger.warning(f"Skipping invalid message: {payload}")
+            queue.delete_message(receipt_handle)
+            continue
+
+        job_id = payload["job_id"]
         url = payload["url"]
+        notify_email = payload.get("notify_email")
+        result = extract_metadata(url, timeout=settings.request_timeout_seconds)
+        logger.info(f"Job {job_id} completed successfully")
+        logger.info(f"Extracted: title={result.get('title')}, words={result.get('word_count')}, links={result.get('link_count')}")
         logger.info(f"Processing job {job_id} for URL {url}")
-        jobs[job_id]["status"] = "processing"
-
+        
         try:
-            # Extract metadata
-            result = extract_metadata(url)
-            
-            # Update job with success
-            jobs[job_id]["status"] = "completed"
-            jobs[job_id]["completed_at"] = datetime.now(UTC).isoformat()
-            jobs[job_id]["result"] = result
-            
+            result = extract_metadata(url, timeout=settings.request_timeout_seconds)
             logger.info(f"Job {job_id} completed successfully")
-
-        except ExtractionError as exc:
-            # Update job with failure
-            jobs[job_id]["status"] = "failed"
-            jobs[job_id]["completed_at"] = datetime.now(UTC).isoformat()
-            jobs[job_id]["error"] = str(exc)
             
+            if notify_email:
+                notifier.notify(
+                    subject=f"Job {job_id} completed",
+                    message=f"Processed {url}\nTitle: {result.get('title')}\nWord count: {result.get('word_count')}",
+                )
+        
+        except ExtractionError as exc:
             logger.error(f"Job {job_id} failed: {exc}")
+            if notify_email:
+                notifier.notify(
+                    subject=f"Job {job_id} failed",
+                    message=f"Failed to process {url}\nError: {str(exc)}",
+                )
+        
+        queue.delete_message(receipt_handle)
 
-        # Acknowledge the message
-        queue.delete(message_id)
 
-    logger.info("Worker stopped.")
+if __name__ == "__main__":
+    main()
