@@ -22,10 +22,11 @@ def main():
         if message is None:
             time.sleep(settings.poll_interval_seconds)
             continue
-        
+
         receipt_handle, payload = message
-        logger.info(f"Received payload: {payload}")  # ADD THIS
-        # Skip messages without job_id
+        logger.info(f"Received payload: {payload}")
+
+        # Skip messages without job_id (stale CLI test messages, etc.)
         if "job_id" not in payload:
             logger.warning(f"Skipping invalid message: {payload}")
             queue.delete_message(receipt_handle)
@@ -34,21 +35,28 @@ def main():
         job_id = payload["job_id"]
         url = payload["url"]
         notify_email = payload.get("notify_email")
-        result = extract_metadata(url, timeout=settings.request_timeout_seconds)
-        logger.info(f"Job {job_id} completed successfully")
-        logger.info(f"Extracted: title={result.get('title')}, words={result.get('word_count')}, links={result.get('link_count')}")
+
         logger.info(f"Processing job {job_id} for URL {url}")
-        
+
         try:
             result = extract_metadata(url, timeout=settings.request_timeout_seconds)
-            logger.info(f"Job {job_id} completed successfully")
-            
+            logger.info(
+                f"Job {job_id} completed successfully. "
+                f"title={result.get('title')}, "
+                f"words={result.get('word_count')}, "
+                f"links={result.get('link_count')}"
+            )
+
             if notify_email:
                 notifier.notify(
                     subject=f"Job {job_id} completed",
-                    message=f"Processed {url}\nTitle: {result.get('title')}\nWord count: {result.get('word_count')}",
+                    message=(
+                        f"Processed {url}\n"
+                        f"Title: {result.get('title')}\n"
+                        f"Word count: {result.get('word_count')}"
+                    ),
                 )
-        
+
         except ExtractionError as exc:
             logger.error(f"Job {job_id} failed: {exc}")
             if notify_email:
@@ -56,7 +64,7 @@ def main():
                     subject=f"Job {job_id} failed",
                     message=f"Failed to process {url}\nError: {str(exc)}",
                 )
-        
+
         queue.delete_message(receipt_handle)
 
 
