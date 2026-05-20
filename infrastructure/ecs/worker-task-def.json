@@ -1,0 +1,32 @@
+{
+  "family": "task-processor-worker",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::025066247780:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::025066247780:role/task-processor-worker-task-role",
+  "containerDefinitions": [
+    {
+      "name": "worker",
+      "image": "025066247780.dkr.ecr.eu-north-1.amazonaws.com/task-processor-worker:latest",
+      "essential": true,
+      "environment": [
+        {"name": "USE_LOCAL_QUEUE", "value": "false"},
+        {"name": "USE_LOCAL_NOTIFIER", "value": "false"},
+        {"name": "AWS_REGION", "value": "eu-north-1"},
+        {"name": "SQS_QUEUE_URL", "value": "https://sqs.eu-north-1.amazonaws.com/025066247780/task-processor-jobs"},
+        {"name": "SNS_TOPIC_ARN", "value": "arn:aws:sns:eu-north-1:025066247780:task-processor-notifications"},
+        {"name": "LOG_LEVEL", "value": "INFO"}
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/task-processor-worker",
+          "awslogs-region": "eu-north-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}
