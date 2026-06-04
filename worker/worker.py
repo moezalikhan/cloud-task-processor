@@ -6,17 +6,48 @@ from producer.queue import get_queue_client
 from worker.notifier import get_notifier
 from worker.extractor import extract_metadata, ExtractionError
 from worker.config import settings
+from worker.db import SessionLocal, Job
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def mark_completed(job_id: str, result: dict):
+    session = SessionLocal()
+    try:
+        job = session.get(Job, job_id)
+        if job:
+            job.status = "completed"
+            job.result = result
+            job.completed_at = datetime.now(UTC)
+            session.commit()
+        else:
+            logger.warning(f"Job {job_id} not found in DB; skipping status update")
+    finally:
+        session.close()
+
+
+def mark_failed(job_id: str, error: str):
+    session = SessionLocal()
+    try:
+        job = session.get(Job, job_id)
+        if job:
+            job.status = "failed"
+            job.error = error
+            job.completed_at = datetime.now(UTC)
+            session.commit()
+        else:
+            logger.warning(f"Job {job_id} not found in DB; skipping status update")
+    finally:
+        session.close()
+
+
 def main():
     queue = get_queue_client()
     notifier = get_notifier()
-    
+
     logger.info(f"Worker started. Polling every {settings.poll_interval_seconds} seconds.")
-    
+
     while True:
         message = queue.receive_message()
         if message is None:
@@ -47,6 +78,8 @@ def main():
                 f"links={result.get('link_count')}"
             )
 
+            mark_completed(job_id, result)
+
             if notify_email:
                 notifier.notify(
                     subject=f"Job {job_id} completed",
@@ -59,6 +92,9 @@ def main():
 
         except ExtractionError as exc:
             logger.error(f"Job {job_id} failed: {exc}")
+
+            mark_failed(job_id, str(exc))
+
             if notify_email:
                 notifier.notify(
                     subject=f"Job {job_id} failed",
